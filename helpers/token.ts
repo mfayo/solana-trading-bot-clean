@@ -16,8 +16,17 @@ export function getToken(token: string) {
         'USDC',
       );
     }
+    case 'USD1': {
+      return new Token(
+        TOKEN_PROGRAM_ID,
+        new PublicKey('USD1ttQYjDscXwD89mH8x6M2YyK7gq6r7rPz5zvEmuB'),
+        6,
+        'USD1',
+        'USD1',
+      );
+    }
     default: {
-      throw new Error(`Unsupported quote mint "${token}". Supported values are USDC and WSOL`);
+      throw new Error(`Unsupported quote mint "${token}". Supported values are USDC, USD1 and WSOL`);
     }
   }
 }
