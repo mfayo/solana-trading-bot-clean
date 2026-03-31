@@ -35,6 +35,7 @@ export interface BotConfig {
   quoteAmount: TokenAmount;
   quoteAta: PublicKey;
   oneTokenAtATime: boolean;
+  rebuySameToken: boolean;
   useSnipeList: boolean;
   autoSell: boolean;
   autoBuyDelay: number;
@@ -258,6 +259,12 @@ export class Bot {
               },
               `Confirmed sell tx`,
             );
+
+            if (this.config.rebuySameToken) {
+              this.poolStorage.delete(rawAccount.mint.toString());
+              logger.info({ mint: rawAccount.mint.toString() }, `Removed token from pool cache for potential rebuy`);
+            }
+
             break;
           }
 
