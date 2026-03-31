@@ -66,10 +66,9 @@ export class GeyserListener extends EventEmitter {
 
   constructor(
     private readonly endpoint: string,
-    private readonly accessToken: string,
   ) {
     super();
-    this.client = new Client(endpoint, accessToken, {});
+    this.client = new Client(endpoint, '', {});
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
