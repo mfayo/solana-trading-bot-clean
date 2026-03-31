@@ -35,7 +35,6 @@ export const RPC_WEBSOCKET_ENDPOINT = retrieveEnvVariable('RPC_WEBSOCKET_ENDPOIN
 // Geyser / Yellowstone Dragon's Mouth (optional — only required when USE_GEYSER=true)
 export const USE_GEYSER = process.env['USE_GEYSER'] === 'true';
 export const GEYSER_ENDPOINT = process.env['GEYSER_ENDPOINT'] ?? '';
-export const GEYSER_ACCESS_TOKEN = process.env['GEYSER_ACCESS_TOKEN'] ?? '';
 
 // Bot
 export const LOG_LEVEL = retrieveEnvVariable('LOG_LEVEL', logger);
@@ -56,6 +55,7 @@ export const BUY_SLIPPAGE = Number(retrieveEnvVariable('BUY_SLIPPAGE', logger));
 
 // Sell
 export const AUTO_SELL = retrieveEnvVariable('AUTO_SELL', logger) === 'true';
+export const REBUY_SAME_TOKEN = process.env['REBUY_SAME_TOKEN'] === 'true';
 export const AUTO_SELL_DELAY = Number(retrieveEnvVariable('AUTO_SELL_DELAY', logger));
 export const MAX_SELL_RETRIES = Number(retrieveEnvVariable('MAX_SELL_RETRIES', logger));
 export const TAKE_PROFIT = Number(retrieveEnvVariable('TAKE_PROFIT', logger));

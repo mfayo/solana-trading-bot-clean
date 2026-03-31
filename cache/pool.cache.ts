@@ -17,4 +17,9 @@ export class PoolCache {
   public async get(mint: string): Promise<{ id: string; state: LiquidityStateV4 }> {
     return this.keys.get(mint)!;
   }
+
+  public delete(mint: string) {
+    logger.trace(`Removing pool from cache for mint: ${mint}`);
+    this.keys.delete(mint);
+  }
 }

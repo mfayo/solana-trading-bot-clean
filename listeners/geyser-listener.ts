@@ -45,10 +45,10 @@ function toKeyedAccountInfo(pubkey: string, data: Buffer, owner: string, lamport
  * Build a base58-encoded bytes string from a buffer slice — same format
  * the RPC memcmp filters use, accepted by Yellowstone as well.
  */
-function memcmpBytes(layout: { offsetOf(field: string): number }, field: string, value: string): { offset: string; bytes: string } {
+function memcmpBytes(layout: { offsetOf(field: string): number }, field: string, value: string): { offset: string; bytes: Uint8Array } {
   return {
     offset: layout.offsetOf(field).toString(),
-    bytes: value,
+    bytes: bs58.decode(value),
   };
 }
 
@@ -66,10 +66,9 @@ export class GeyserListener extends EventEmitter {
 
   constructor(
     private readonly endpoint: string,
-    private readonly accessToken: string,
   ) {
     super();
-    this.client = new Client(endpoint, accessToken, {});
+    this.client = new Client(endpoint, '', {});
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -130,8 +129,10 @@ export class GeyserListener extends EventEmitter {
       accounts: {},
       slots: {},
       transactions: {},
+      transactionsStatus: {},
       blocks: {},
       blocksMeta: {},
+      entry: {},
       accountsDataSlice: [],
       commitment: CommitmentLevel.CONFIRMED,
     };
@@ -141,13 +142,13 @@ export class GeyserListener extends EventEmitter {
       account: [],
       owner: [MAINNET_PROGRAM_ID.AmmV4.toBase58()],
       filters: [
-        { datasize: BigInt(LIQUIDITY_STATE_LAYOUT_V4.span) },
+        { datasize: LIQUIDITY_STATE_LAYOUT_V4.span.toString() },
         { memcmp: memcmpBytes(LIQUIDITY_STATE_LAYOUT_V4, 'quoteMint', quoteMintB58) },
         { memcmp: memcmpBytes(LIQUIDITY_STATE_LAYOUT_V4, 'marketProgramId', openBookProgramB58) },
         {
           memcmp: {
             offset: LIQUIDITY_STATE_LAYOUT_V4.offsetOf('status').toString(),
-            bytes: bs58.encode(Buffer.from([6, 0, 0, 0, 0, 0, 0, 0])),
+            bytes: Buffer.from([6, 0, 0, 0, 0, 0, 0, 0]),
           },
         },
       ],
@@ -160,7 +161,7 @@ export class GeyserListener extends EventEmitter {
         account: [],
         owner: [MAINNET_PROGRAM_ID.OPENBOOK_MARKET.toBase58()],
         filters: [
-          { datasize: BigInt(MARKET_STATE_LAYOUT_V3.span) },
+          { datasize: MARKET_STATE_LAYOUT_V3.span.toString() },
           { memcmp: memcmpBytes(MARKET_STATE_LAYOUT_V3, 'quoteMint', quoteMintB58) },
         ],
         nonemptyTxnSignature: false,
@@ -173,11 +174,11 @@ export class GeyserListener extends EventEmitter {
         account: [],
         owner: [TOKEN_PROGRAM_ID.toBase58()],
         filters: [
-          { datasize: BigInt(165) },
+          { datasize: '165' },
           {
             memcmp: {
               offset: '32',
-              bytes: walletPublicKey.toBase58(),
+              bytes: walletPublicKey.toBytes(),
             },
           },
         ],
@@ -196,13 +197,14 @@ export class GeyserListener extends EventEmitter {
   private handleUpdate(update: SubscribeUpdate): void {
     if (!update.account) return;
 
-    const { account, filters } = update.account;
-    if (!account?.pubkey || !account.account) return;
+    const { filters } = update;
+    const { account } = update.account;
+    if (!account?.pubkey || !account.data) return;
 
     const pubkey = bs58.encode(Buffer.from(account.pubkey));
-    const data = Buffer.from(account.account.data);
-    const owner = bs58.encode(Buffer.from(account.account.owner));
-    const lamports = account.account.lamports ?? BigInt(0);
+    const data = Buffer.from(account.data);
+    const owner = bs58.encode(Buffer.from(account.owner));
+    const lamports = BigInt(account.lamports ?? '0');
 
     const keyedInfo = toKeyedAccountInfo(pubkey, data, owner, lamports);
 

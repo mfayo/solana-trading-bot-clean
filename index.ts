@@ -27,6 +27,7 @@ import {
   AUTO_SELL_DELAY,
   MAX_SELL_RETRIES,
   AUTO_SELL,
+  REBUY_SAME_TOKEN,
   MAX_BUY_RETRIES,
   AUTO_BUY_DELAY,
   COMPUTE_UNIT_LIMIT,
@@ -46,7 +47,6 @@ import {
   CONSECUTIVE_FILTER_MATCHES,
   USE_GEYSER,
   GEYSER_ENDPOINT,
-  GEYSER_ACCESS_TOKEN,
 } from './helpers';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -182,6 +182,7 @@ const runListener = async () => {
     quoteToken,
     quoteAmount: new TokenAmount(quoteToken, QUOTE_AMOUNT, false),
     oneTokenAtATime: ONE_TOKEN_AT_A_TIME,
+    rebuySameToken: REBUY_SAME_TOKEN,
     useSnipeList: USE_SNIPE_LIST,
     autoSell: AUTO_SELL,
     autoSellDelay: AUTO_SELL_DELAY,
@@ -224,12 +225,12 @@ const runListener = async () => {
   let listeners: Listeners | GeyserListener;
 
   if (USE_GEYSER) {
-    if (!GEYSER_ENDPOINT || !GEYSER_ACCESS_TOKEN) {
-      logger.error('USE_GEYSER=true requires GEYSER_ENDPOINT and GEYSER_ACCESS_TOKEN to be set');
+    if (!GEYSER_ENDPOINT) {
+      logger.error('USE_GEYSER=true requires GEYSER_ENDPOINT to be set');
       process.exit(1);
     }
     logger.info({ endpoint: GEYSER_ENDPOINT }, 'Using Yellowstone Geyser (Dragon\'s Mouth) listener');
-    listeners = new GeyserListener(GEYSER_ENDPOINT, GEYSER_ACCESS_TOKEN);
+    listeners = new GeyserListener(GEYSER_ENDPOINT);
   } else {
     logger.info('Using WebSocket listener');
     listeners = new Listeners(connection);
