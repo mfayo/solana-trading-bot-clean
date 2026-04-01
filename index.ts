@@ -46,10 +46,12 @@ import {
   CONSECUTIVE_FILTER_MATCHES,
   USE_GEYSER,
   GEYSER_ENDPOINT,
+  DRY_RUN,
 } from './helpers';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
+import { DryRunTransactionExecutor } from './transactions/dry-run-transaction-executor';
 
 const connection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
@@ -153,18 +155,23 @@ const runListener = async () => {
   const poolCache = new PoolCache();
   let txExecutor: TransactionExecutor;
 
-  switch (TRANSACTION_EXECUTOR) {
-    case 'warp': {
-      txExecutor = new WarpTransactionExecutor(CUSTOM_FEE);
-      break;
-    }
-    case 'jito': {
-      txExecutor = new JitoTransactionExecutor(CUSTOM_FEE, connection);
-      break;
-    }
-    default: {
-      txExecutor = new DefaultTransactionExecutor(connection);
-      break;
+  if (DRY_RUN) {
+    txExecutor = new DryRunTransactionExecutor();
+    logger.warn('DRY RUN MODE ENABLED — no transactions will be submitted to the blockchain');
+  } else {
+    switch (TRANSACTION_EXECUTOR) {
+      case 'warp': {
+        txExecutor = new WarpTransactionExecutor(CUSTOM_FEE);
+        break;
+      }
+      case 'jito': {
+        txExecutor = new JitoTransactionExecutor(CUSTOM_FEE, connection);
+        break;
+      }
+      default: {
+        txExecutor = new DefaultTransactionExecutor(connection);
+        break;
+      }
     }
   }
 
