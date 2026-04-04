@@ -63,6 +63,17 @@ export class Bot {
   // one token at the time
   private readonly mutex: Mutex;
   private sellExecutionCount = 0;
+  private readonly watchedPools: Map<
+    string,
+    {
+      tokenAmount: TokenAmount;
+      poolKeys: LiquidityPoolKeysV4;
+      resolve: () => void;
+      slippage: Percent;
+      takeProfit: TokenAmount;
+      stopLoss: TokenAmount;
+    }
+  > = new Map();
   public readonly isWarp: boolean = false;
   public readonly isJito: boolean = false;
 
@@ -391,56 +402,57 @@ export class Bot {
     return false;
   }
 
-  private async priceMatch(amountIn: TokenAmount, poolKeys: LiquidityPoolKeysV4) {
-    if (this.config.priceCheckDuration === 0 || this.config.priceCheckInterval === 0) {
+  private async priceMatch(amountIn: TokenAmount, poolKeys: LiquidityPoolKeysV4): Promise<void> {
+    if (this.config.priceCheckDuration === 0) {
       return;
     }
 
-    const timesToCheck = this.config.priceCheckDuration / this.config.priceCheckInterval;
     const profitFraction = this.config.quoteAmount.mul(this.config.takeProfit).numerator.div(new BN(100));
-    const profitAmount = new TokenAmount(this.config.quoteToken, profitFraction, true);
-    const takeProfit = this.config.quoteAmount.add(profitAmount);
-
+    const takeProfit = this.config.quoteAmount.add(new TokenAmount(this.config.quoteToken, profitFraction, true));
     const lossFraction = this.config.quoteAmount.mul(this.config.stopLoss).numerator.div(new BN(100));
-    const lossAmount = new TokenAmount(this.config.quoteToken, lossFraction, true);
-    const stopLoss = this.config.quoteAmount.subtract(lossAmount);
+    const stopLoss = this.config.quoteAmount.subtract(new TokenAmount(this.config.quoteToken, lossFraction, true));
     const slippage = new Percent(this.config.sellSlippage, 100);
-    let timesChecked = 0;
+    const mint = poolKeys.baseMint.toString();
 
-    do {
-      try {
-        const poolInfo = await Liquidity.fetchInfo({
-          connection: this.connection,
-          poolKeys,
-        });
+    return new Promise<void>((resolve) => {
+      this.watchedPools.set(mint, { tokenAmount: amountIn, poolKeys, resolve, slippage, takeProfit, stopLoss });
 
-        const amountOut = Liquidity.computeAmountOut({
-          poolKeys,
-          poolInfo,
-          amountIn: amountIn,
-          currencyOut: this.config.quoteToken,
-          slippage,
-        }).amountOut;
-
-        logger.debug(
-          { mint: poolKeys.baseMint.toString() },
-          `Take profit: ${takeProfit.toFixed()} | Stop loss: ${stopLoss.toFixed()} | Current: ${amountOut.toFixed()}`,
-        );
-
-        if (amountOut.lt(stopLoss)) {
-          break;
+      setTimeout(() => {
+        if (this.watchedPools.has(mint)) {
+          logger.debug({ mint }, `Price check duration expired, proceeding to sell`);
+          this.watchedPools.delete(mint);
+          resolve();
         }
+      }, this.config.priceCheckDuration);
+    });
+  }
 
-        if (amountOut.gt(takeProfit)) {
-          break;
-        }
+  public async handlePoolUpdate(accountId: PublicKey, poolState: LiquidityStateV4): Promise<void> {
+    const mint = poolState.baseMint.toString();
+    const watchState = this.watchedPools.get(mint);
+    if (!watchState) return;
 
-        await sleep(this.config.priceCheckInterval);
-      } catch (e) {
-        logger.trace({ mint: poolKeys.baseMint.toString(), e }, `Failed to check token price`);
-      } finally {
-        timesChecked++;
+    try {
+      const poolInfo = await Liquidity.fetchInfo({ connection: this.connection, poolKeys: watchState.poolKeys });
+      const amountOut = Liquidity.computeAmountOut({
+        poolKeys: watchState.poolKeys,
+        poolInfo,
+        amountIn: watchState.tokenAmount,
+        currencyOut: this.config.quoteToken,
+        slippage: watchState.slippage,
+      }).amountOut;
+
+      logger.debug(
+        { mint },
+        `Take profit: ${watchState.takeProfit.toFixed()} | Stop loss: ${watchState.stopLoss.toFixed()} | Current: ${amountOut.toFixed()}`,
+      );
+
+      if (amountOut.lt(watchState.stopLoss) || amountOut.gt(watchState.takeProfit)) {
+        this.watchedPools.delete(mint);
+        watchState.resolve();
       }
-    } while (timesChecked < timesToCheck);
+    } catch (e) {
+      logger.trace({ mint, e }, `Failed to check price on pool update`);
+    }
   }
 }
