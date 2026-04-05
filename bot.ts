@@ -46,6 +46,7 @@ export interface BotConfig {
   takeProfit: number;
   stopLoss: number;
   trailingStopLoss: boolean;
+  trailingDistance: number;
   buySlippage: number;
   sellSlippage: number;
   priceCheckInterval: number;
@@ -73,6 +74,7 @@ export class Bot {
       slippage: Percent;
       takeProfit: TokenAmount;
       stopLoss: TokenAmount;
+      hardStopLoss: TokenAmount;
       highWaterMark: TokenAmount;
     }
   > = new Map();
@@ -417,7 +419,7 @@ export class Bot {
     const mint = poolKeys.baseMint.toString();
 
     return new Promise<void>((resolve) => {
-      this.watchedPools.set(mint, { tokenAmount: amountIn, poolKeys, resolve, slippage, takeProfit, stopLoss, highWaterMark: this.config.quoteAmount });
+      this.watchedPools.set(mint, { tokenAmount: amountIn, poolKeys, resolve, slippage, takeProfit, stopLoss, hardStopLoss: stopLoss, highWaterMark: this.config.quoteAmount });
 
       setTimeout(() => {
         if (this.watchedPools.has(mint)) {
@@ -446,11 +448,14 @@ export class Bot {
 
       if (this.config.trailingStopLoss && amountOut.raw.gt(watchState.highWaterMark.raw)) {
         watchState.highWaterMark = new TokenAmount(this.config.quoteToken, amountOut.raw);
-        const trailingLossFraction = watchState.highWaterMark.raw.muln(this.config.stopLoss).divn(100);
-        watchState.stopLoss = new TokenAmount(this.config.quoteToken, watchState.highWaterMark.raw.sub(trailingLossFraction));
+        const trailFraction = watchState.highWaterMark.raw.muln(this.config.trailingDistance).divn(100);
+        const trailingTrigger = new TokenAmount(this.config.quoteToken, watchState.highWaterMark.raw.sub(trailFraction));
+        if (trailingTrigger.raw.gt(watchState.hardStopLoss.raw)) {
+          watchState.stopLoss = trailingTrigger;
+        }
         logger.debug(
           { mint },
-          `New high: ${watchState.highWaterMark.toFixed()} | Trailing stop raised to: ${watchState.stopLoss.toFixed()}`,
+          `New high: ${watchState.highWaterMark.toFixed()} | Trailing trigger: ${trailingTrigger.toFixed()} | Hard floor: ${watchState.hardStopLoss.toFixed()}`,
         );
       }
 
