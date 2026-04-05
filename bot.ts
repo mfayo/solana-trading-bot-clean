@@ -45,6 +45,7 @@ export interface BotConfig {
   unitPrice: number;
   takeProfit: number;
   stopLoss: number;
+  trailingStopLoss: boolean;
   buySlippage: number;
   sellSlippage: number;
   priceCheckInterval: number;
@@ -72,6 +73,7 @@ export class Bot {
       slippage: Percent;
       takeProfit: TokenAmount;
       stopLoss: TokenAmount;
+      highWaterMark: TokenAmount;
     }
   > = new Map();
   public readonly isWarp: boolean = false;
@@ -415,7 +417,7 @@ export class Bot {
     const mint = poolKeys.baseMint.toString();
 
     return new Promise<void>((resolve) => {
-      this.watchedPools.set(mint, { tokenAmount: amountIn, poolKeys, resolve, slippage, takeProfit, stopLoss });
+      this.watchedPools.set(mint, { tokenAmount: amountIn, poolKeys, resolve, slippage, takeProfit, stopLoss, highWaterMark: this.config.quoteAmount });
 
       setTimeout(() => {
         if (this.watchedPools.has(mint)) {
@@ -441,6 +443,16 @@ export class Bot {
         currencyOut: this.config.quoteToken,
         slippage: watchState.slippage,
       }).amountOut;
+
+      if (this.config.trailingStopLoss && amountOut.raw.gt(watchState.highWaterMark.raw)) {
+        watchState.highWaterMark = new TokenAmount(this.config.quoteToken, amountOut.raw);
+        const trailingLossFraction = watchState.highWaterMark.raw.muln(this.config.stopLoss).divn(100);
+        watchState.stopLoss = new TokenAmount(this.config.quoteToken, watchState.highWaterMark.raw.sub(trailingLossFraction));
+        logger.debug(
+          { mint },
+          `New high: ${watchState.highWaterMark.toFixed()} | Trailing stop raised to: ${watchState.stopLoss.toFixed()}`,
+        );
+      }
 
       logger.debug(
         { mint },
