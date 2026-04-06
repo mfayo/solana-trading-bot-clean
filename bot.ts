@@ -47,6 +47,8 @@ export interface BotConfig {
   stopLoss: number;
   trailingStopLoss: boolean;
   trailingDistance: number;
+  trailingTakeProfit: boolean;
+  trailingTakeProfitDistance: number;
   buySlippage: number;
   sellSlippage: number;
   priceCheckInterval: number;
@@ -446,17 +448,19 @@ export class Bot {
         slippage: watchState.slippage,
       }).amountOut;
 
-      if (this.config.trailingStopLoss && amountOut.raw.gt(watchState.highWaterMark.raw)) {
+      if ((this.config.trailingStopLoss || this.config.trailingTakeProfit) && amountOut.raw.gt(watchState.highWaterMark.raw)) {
         watchState.highWaterMark = new TokenAmount(this.config.quoteToken, amountOut.raw);
-        const trailFraction = watchState.highWaterMark.raw.muln(this.config.trailingDistance).divn(100);
-        const trailingTrigger = new TokenAmount(this.config.quoteToken, watchState.highWaterMark.raw.sub(trailFraction));
-        if (trailingTrigger.raw.gt(watchState.hardStopLoss.raw)) {
-          watchState.stopLoss = trailingTrigger;
+        if (this.config.trailingStopLoss) {
+          const trailFraction = watchState.highWaterMark.raw.muln(this.config.trailingDistance).divn(100);
+          const trailingTrigger = new TokenAmount(this.config.quoteToken, watchState.highWaterMark.raw.sub(trailFraction));
+          if (trailingTrigger.raw.gt(watchState.hardStopLoss.raw)) {
+            watchState.stopLoss = trailingTrigger;
+          }
+          logger.debug(
+            { mint },
+            `New high: ${watchState.highWaterMark.toFixed()} | Trailing trigger: ${trailingTrigger.toFixed()} | Hard floor: ${watchState.hardStopLoss.toFixed()}`,
+          );
         }
-        logger.debug(
-          { mint },
-          `New high: ${watchState.highWaterMark.toFixed()} | Trailing trigger: ${trailingTrigger.toFixed()} | Hard floor: ${watchState.hardStopLoss.toFixed()}`,
-        );
       }
 
       logger.debug(
@@ -464,7 +468,29 @@ export class Bot {
         `Take profit: ${watchState.takeProfit.toFixed()} | Stop loss: ${watchState.stopLoss.toFixed()} | Current: ${amountOut.toFixed()}`,
       );
 
-      if (amountOut.lt(watchState.stopLoss) || amountOut.gt(watchState.takeProfit)) {
+      if (this.config.trailingTakeProfit) {
+        const takeProfitActivated = watchState.highWaterMark.raw.gt(watchState.takeProfit.raw);
+        if (takeProfitActivated) {
+          const trailFraction = watchState.highWaterMark.raw.muln(this.config.trailingTakeProfitDistance).divn(100);
+          const trailingTakeProfitTrigger = new TokenAmount(
+            this.config.quoteToken,
+            watchState.highWaterMark.raw.sub(trailFraction),
+          );
+          logger.debug(
+            { mint },
+            `TP trailing active | Peak: ${watchState.highWaterMark.toFixed()} | Sell trigger: ${trailingTakeProfitTrigger.toFixed()} | Current: ${amountOut.toFixed()}`,
+          );
+          if (amountOut.lt(watchState.stopLoss) || amountOut.lt(trailingTakeProfitTrigger)) {
+            this.watchedPools.delete(mint);
+            watchState.resolve();
+          }
+        } else {
+          if (amountOut.lt(watchState.stopLoss)) {
+            this.watchedPools.delete(mint);
+            watchState.resolve();
+          }
+        }
+      } else if (amountOut.lt(watchState.stopLoss) || amountOut.gt(watchState.takeProfit)) {
         this.watchedPools.delete(mint);
         watchState.resolve();
       }
