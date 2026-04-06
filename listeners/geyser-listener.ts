@@ -7,8 +7,10 @@ import Client, {
   CommitmentLevel,
   SubscribeRequest,
   SubscribeUpdate,
+  SubscribeUpdateTransaction,
 } from '@triton-one/yellowstone-grpc';
 import { logger } from '../helpers/logger';
+import { USE_SNIPER } from '../helpers';
 import { ClientDuplexStream } from '@grpc/grpc-js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -134,7 +136,7 @@ export class GeyserListener extends EventEmitter {
       blocksMeta: {},
       entry: {},
       accountsDataSlice: [],
-      commitment: CommitmentLevel.CONFIRMED,
+      commitment: CommitmentLevel.PROCESSED,
     };
 
     // ── Raydium AMM V4 pool updates (always subscribed) ────────────────────
@@ -168,6 +170,17 @@ export class GeyserListener extends EventEmitter {
       };
     }
 
+    // ── Transaction-based new pool detection (sniping, optional) ──────────
+    if (USE_SNIPER) {
+      request.transactions['raydium_sniper'] = {
+        vote: false,
+        failed: false,
+        accountInclude: [MAINNET_PROGRAM_ID.AmmV4.toBase58()],
+        accountExclude: [],
+        accountRequired: [],
+      };
+    }
+
     // ── Wallet token-account changes (optional, used for auto-sell) ────────
     if (autoSell) {
       request.accounts['walletTokenAccounts'] = {
@@ -195,6 +208,17 @@ export class GeyserListener extends EventEmitter {
   }
 
   private handleUpdate(update: SubscribeUpdate): void {
+    // ── Transaction updates (sniping) ──────────────────────────────────────
+    if (update.transaction) {
+      for (const filterId of update.filters) {
+        if (filterId === 'raydium_sniper') {
+          this.emit('snipe', update.transaction as SubscribeUpdateTransaction);
+        }
+      }
+      return;
+    }
+
+    // ── Account updates (scalping / market / wallet) ────────────────────────
     if (!update.account) return;
 
     const { filters } = update;
@@ -208,7 +232,6 @@ export class GeyserListener extends EventEmitter {
 
     const keyedInfo = toKeyedAccountInfo(pubkey, data, owner, lamports);
 
-    // Route to the correct event based on which subscription filter matched
     for (const filterId of filters) {
       if (filterId === 'raydiumPools') {
         this.emit('pool', keyedInfo);

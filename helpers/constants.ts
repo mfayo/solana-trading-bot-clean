@@ -35,6 +35,7 @@ export const RPC_WEBSOCKET_ENDPOINT = retrieveEnvVariable('RPC_WEBSOCKET_ENDPOIN
 // Geyser / Yellowstone Dragon's Mouth (optional — only required when USE_GEYSER=true)
 export const USE_GEYSER = process.env['USE_GEYSER'] === 'true';
 export const GEYSER_ENDPOINT = process.env['GEYSER_ENDPOINT'] ?? '';
+export const USE_SNIPER = process.env['USE_SNIPER'] === 'true';
 export const DRY_RUN = process.env['DRY_RUN'] === 'true';
 
 // Bot

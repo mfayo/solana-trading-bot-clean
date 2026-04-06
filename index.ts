@@ -1,7 +1,9 @@
 import { MarketCache, PoolCache } from './cache';
 import { Listeners, GeyserListener } from './listeners';
-import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
-import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
+import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.js';
+import bs58 from 'bs58';
+import { LIQUIDITY_STATE_LAYOUT_V4, MAINNET_PROGRAM_ID, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
+import { SubscribeUpdateTransaction } from '@triton-one/yellowstone-grpc';
 import { AccountLayout, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
 import { DefaultTransactionExecutor, TransactionExecutor } from './transactions';
@@ -50,6 +52,7 @@ import {
   CONSECUTIVE_FILTER_MATCHES,
   USE_GEYSER,
   GEYSER_ENDPOINT,
+  USE_SNIPER,
   DRY_RUN,
 } from './helpers';
 import { version } from './package.json';
@@ -237,6 +240,10 @@ const runListener = async () => {
   // ─────────────────────────────────────────────────────────────────────────
   let listeners: Listeners | GeyserListener;
 
+  if (USE_SNIPER && !USE_GEYSER) {
+    logger.warn('USE_SNIPER=true has no effect when USE_GEYSER=false');
+  }
+
   if (USE_GEYSER) {
     if (!GEYSER_ENDPOINT) {
       logger.error('USE_GEYSER=true requires GEYSER_ENDPOINT to be set');
@@ -255,6 +262,43 @@ const runListener = async () => {
     autoSell: AUTO_SELL,
     cacheNewMarkets: CACHE_NEW_MARKETS,
   });
+
+  if (USE_GEYSER && USE_SNIPER) {
+    listeners.on('snipe', async (txUpdate: SubscribeUpdateTransaction) => {
+      try {
+        const txInfo = txUpdate.transaction;
+        if (!txInfo?.transaction?.message) return;
+        const { accountKeys, instructions } = txInfo.transaction.message;
+        const ammV4B58 = MAINNET_PROGRAM_ID.AmmV4.toBase58();
+
+        // Find the initialize2 instruction (program = AmmV4)
+        const initIx = instructions.find((ix) =>
+          bs58.encode(Buffer.from(accountKeys[ix.programIdIndex])) === ammV4B58,
+        );
+        if (!initIx || initIx.accounts.length < 5) return;
+
+        // Pool account pubkey is at index 4 in the instruction's accounts
+        const poolId = new PublicKey(Buffer.from(accountKeys[initIx.accounts[4]]));
+
+        const alreadyKnown = await poolCache.get(poolId.toBase58());
+        if (alreadyKnown) return;
+
+        const accountInfo = await connection.getAccountInfo(poolId, 'processed');
+        if (!accountInfo?.data) {
+          logger.warn({ poolId: poolId.toBase58() }, 'Sniper: pool account not yet available');
+          return;
+        }
+
+        const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(accountInfo.data);
+        if (parseInt(poolState.poolOpenTime.toString()) <= runTimestamp) return;
+
+        poolCache.save(poolId.toBase58(), poolState);
+        await bot.buy(poolId, poolState);
+      } catch (err) {
+        logger.error({ err }, 'Sniper: error processing transaction update');
+      }
+    });
+  }
 
   listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
     const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
