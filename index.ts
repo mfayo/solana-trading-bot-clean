@@ -1,6 +1,6 @@
 import { MarketCache, PoolCache } from './cache';
 import { Listeners, GeyserListener } from './listeners';
-import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
+import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { AccountLayout, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
@@ -47,6 +47,10 @@ import {
   CONSECUTIVE_FILTER_MATCHES,
   USE_GEYSER,
   GEYSER_ENDPOINT,
+  MIN_BUY_PRESSURE_PCT,
+  MIN_FLOW_RATIO,
+  MIN_SWAP_COUNT,
+  MAX_DRAWDOWN_FROM_PEAK_PCT,
 } from './helpers';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -200,6 +204,10 @@ const runListener = async () => {
     filterCheckInterval: FILTER_CHECK_INTERVAL,
     filterCheckDuration: FILTER_CHECK_DURATION,
     consecutiveMatchCount: CONSECUTIVE_FILTER_MATCHES,
+    minBuyPressurePct: MIN_BUY_PRESSURE_PCT,
+    minFlowRatio: MIN_FLOW_RATIO,
+    minSwapCount: MIN_SWAP_COUNT,
+    maxDrawdownFromPeakPct: MAX_DRAWDOWN_FROM_PEAK_PCT,
   };
 
   const bot = new Bot(connection, marketCache, poolCache, txExecutor, botConfig);
@@ -230,7 +238,9 @@ const runListener = async () => {
       process.exit(1);
     }
     logger.info({ endpoint: GEYSER_ENDPOINT }, 'Using Yellowstone Geyser (Dragon\'s Mouth) listener');
-    listeners = new GeyserListener(GEYSER_ENDPOINT);
+    const geyserListener = new GeyserListener(GEYSER_ENDPOINT);
+    listeners = geyserListener;
+    bot.setGeyserListener(geyserListener);
   } else {
     logger.info('Using WebSocket listener');
     listeners = new Listeners(connection);
@@ -268,6 +278,12 @@ const runListener = async () => {
 
     await bot.sell(updatedAccountInfo.accountId, accountData);
   });
+
+  if (USE_GEYSER) {
+    listeners.on('vault_update', (mint: string, pubkey: PublicKey, data: Buffer) => {
+      bot.updateVaultBalance(mint, pubkey, data);
+    });
+  }
 
   printDetails(wallet, quoteToken, bot);
 };

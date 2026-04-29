@@ -7,6 +7,7 @@ import {
   VersionedTransaction,
 } from '@solana/web3.js';
 import {
+  AccountLayout,
   createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   getAccount,
@@ -19,6 +20,7 @@ import { MarketCache, PoolCache, SnipeListCache } from './cache';
 import { PoolFilters } from './filters';
 import { TransactionExecutor } from './transactions';
 import { createPoolKeys, logger, NETWORK, sleep } from './helpers';
+import { GeyserListener } from './listeners/geyser-listener';
 import { Mutex } from 'async-mutex';
 import BN from 'bn.js';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -53,6 +55,27 @@ export interface BotConfig {
   filterCheckInterval: number;
   filterCheckDuration: number;
   consecutiveMatchCount: number;
+  minBuyPressurePct: number;
+  minFlowRatio: number;
+  minSwapCount: number;
+  maxDrawdownFromPeakPct: number;
+}
+
+interface PreBuyObservation {
+  poolKeys: LiquidityPoolKeysV4;
+  baselineQuoteVault: BN | null;
+  baselineBaseVault: BN | null;
+  currentQuoteVault: BN | null;
+  currentBaseVault: BN | null;
+  grossQuoteFlow: BN;
+  peakQuoteVault: BN | null;
+  swapCount: number;
+}
+
+interface WatchedPoolState {
+  poolKeys: LiquidityPoolKeysV4;
+  baseVaultBalance: BN | null;
+  quoteVaultBalance: BN | null;
 }
 
 export class Bot {
@@ -66,6 +89,10 @@ export class Bot {
   private sellExecutionCount = 0;
   public readonly isWarp: boolean = false;
   public readonly isJito: boolean = false;
+
+  private readonly preBuyObservations: Map<string, PreBuyObservation> = new Map();
+  private geyserListener: GeyserListener | null = null;
+  private readonly watchedPools: Map<string, WatchedPoolState> = new Map();
 
   constructor(
     private readonly connection: Connection,
@@ -88,6 +115,10 @@ export class Bot {
       this.snipeListCache = new SnipeListCache();
       this.snipeListCache.init();
     }
+  }
+
+  public setGeyserListener(listener: GeyserListener): void {
+    this.geyserListener = listener;
   }
 
   async validate() {
@@ -136,11 +167,25 @@ export class Bot {
       const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(accountId, poolState, market);
 
       if (!this.config.useSnipeList) {
-        const match = await this.filterMatch(poolKeys);
+        this.startPreBuyObservation(poolKeys);
 
-        if (!match) {
-          logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
-          return;
+        let proceedToBuy = false;
+        try {
+          const safetyMatch = await this.filterMatch(poolKeys);
+          if (!safetyMatch) {
+            logger.trace({ mint: poolState.baseMint.toString() }, `Skipping buy because pool failed safety filters`);
+            return;
+          }
+
+          const deltaMatch = this.evaluateDeltaFilters(poolState.baseMint.toString());
+          if (!deltaMatch) {
+            logger.trace({ mint: poolState.baseMint.toString() }, `Skipping buy because pool failed delta filters`);
+            return;
+          }
+
+          proceedToBuy = true;
+        } finally {
+          this.stopPreBuyObservation(poolState.baseMint.toString(), poolKeys, proceedToBuy);
         }
       }
 
@@ -287,6 +332,122 @@ export class Bot {
         this.sellExecutionCount--;
       }
     }
+  }
+
+  public updateVaultBalance(mint: string, pubkey: PublicKey, data: Buffer): void {
+    let amountBN: BN;
+    try {
+      const { amount } = AccountLayout.decode(data);
+      amountBN = new BN(amount.toString());
+    } catch (e) {
+      logger.trace({ mint, e }, 'Failed to decode vault account data');
+      return;
+    }
+
+    // Phase 1: pre-buy observation
+    const obs = this.preBuyObservations.get(mint);
+    if (obs) {
+      const isQuote = pubkey.equals(obs.poolKeys.quoteVault);
+      const isBase = pubkey.equals(obs.poolKeys.baseVault);
+
+      if (isQuote) {
+        if (obs.baselineQuoteVault === null) {
+          obs.baselineQuoteVault = amountBN;
+          obs.currentQuoteVault = amountBN;
+          obs.peakQuoteVault = amountBN;
+        } else {
+          const delta = amountBN.sub(obs.currentQuoteVault!).abs();
+          obs.grossQuoteFlow = obs.grossQuoteFlow.add(delta);
+          obs.currentQuoteVault = amountBN;
+          obs.swapCount += 1;
+          if (amountBN.gt(obs.peakQuoteVault!)) obs.peakQuoteVault = amountBN;
+        }
+        return;
+      }
+      if (isBase) {
+        if (obs.baselineBaseVault === null) obs.baselineBaseVault = amountBN;
+        obs.currentBaseVault = amountBN;
+        return;
+      }
+    }
+
+    // Phase 2: active position (trailing stop)
+    const watchState = this.watchedPools.get(mint);
+    if (!watchState) return;
+
+    if (pubkey.equals(watchState.poolKeys.baseVault)) {
+      watchState.baseVaultBalance = amountBN;
+    } else if (pubkey.equals(watchState.poolKeys.quoteVault)) {
+      watchState.quoteVaultBalance = amountBN;
+    }
+  }
+
+  private startPreBuyObservation(poolKeys: LiquidityPoolKeysV4): void {
+    if (!this.geyserListener) return;
+    const mint = poolKeys.baseMint.toString();
+    this.preBuyObservations.set(mint, {
+      poolKeys,
+      baselineQuoteVault: null,
+      baselineBaseVault: null,
+      currentQuoteVault: null,
+      currentBaseVault: null,
+      grossQuoteFlow: new BN(0),
+      peakQuoteVault: null,
+      swapCount: 0,
+    });
+    this.geyserListener.watchVaults(poolKeys.baseVault, poolKeys.quoteVault, mint);
+  }
+
+  private stopPreBuyObservation(mint: string, poolKeys: LiquidityPoolKeysV4, proceedingToBuy: boolean): void {
+    this.preBuyObservations.delete(mint);
+    if (!this.geyserListener) return;
+    // If proceeding to buy, leave subscription alive — it transitions to trailing stop monitoring
+    if (!proceedingToBuy) {
+      this.geyserListener.unwatchVaults(poolKeys.baseVault, poolKeys.quoteVault, mint);
+    }
+  }
+
+  private evaluateDeltaFilters(mint: string): boolean {
+    const obs = this.preBuyObservations.get(mint);
+    if (!obs || !obs.baselineQuoteVault || !obs.currentQuoteVault) {
+      logger.debug({ mint }, 'No vault data collected — failing delta filters');
+      return false;
+    }
+
+    if (obs.swapCount < this.config.minSwapCount) {
+      logger.debug({ mint, swapCount: obs.swapCount }, 'Failed: not enough swap activity');
+      return false;
+    }
+
+    const netFlow = obs.currentQuoteVault.sub(obs.baselineQuoteVault);
+    const baselinePct = obs.baselineQuoteVault.muln(this.config.minBuyPressurePct).divn(100);
+    if (netFlow.lt(baselinePct)) {
+      logger.debug({ mint }, 'Failed: insufficient buy pressure');
+      return false;
+    }
+
+    if (obs.grossQuoteFlow.isZero()) {
+      logger.debug({ mint }, 'Failed: zero gross flow');
+      return false;
+    }
+    const ratioScaled = netFlow.muln(100).div(obs.grossQuoteFlow).toNumber();
+    const requiredRatio = Math.floor(this.config.minFlowRatio * 100);
+    if (ratioScaled < requiredRatio) {
+      logger.debug({ mint, ratioScaled, requiredRatio }, 'Failed: net/gross flow ratio too low');
+      return false;
+    }
+
+    if (obs.peakQuoteVault && obs.peakQuoteVault.gt(obs.currentQuoteVault)) {
+      const drawdown = obs.peakQuoteVault.sub(obs.currentQuoteVault);
+      const drawdownPct = drawdown.muln(100).div(obs.peakQuoteVault).toNumber();
+      if (drawdownPct > this.config.maxDrawdownFromPeakPct) {
+        logger.debug({ mint, drawdownPct }, 'Failed: price already dumping from peak');
+        return false;
+      }
+    }
+
+    logger.info({ mint, swapCount: obs.swapCount, ratioScaled }, 'Delta filters passed ✅');
+    return true;
   }
 
   // noinspection JSUnusedLocalSymbols

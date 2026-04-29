@@ -63,6 +63,7 @@ export class GeyserListener extends EventEmitter {
   private reconnectAttempts = 0;
   private stopping = false;
   private config: GeyserConfig | null = null;
+  private vaultWatches: Map<string, string> = new Map(); // vault pubkey (base58) → mint
 
   constructor(
     private readonly endpoint: string,
@@ -77,6 +78,18 @@ export class GeyserListener extends EventEmitter {
     this.config = config;
     this.stopping = false;
     await this.connect();
+  }
+
+  public watchVaults(baseVault: PublicKey, quoteVault: PublicKey, mint: string): void {
+    this.vaultWatches.set(baseVault.toBase58(), mint);
+    this.vaultWatches.set(quoteVault.toBase58(), mint);
+    this.sendVaultSubscriptionUpdate();
+  }
+
+  public unwatchVaults(baseVault: PublicKey, quoteVault: PublicKey, mint: string): void {
+    this.vaultWatches.delete(baseVault.toBase58());
+    this.vaultWatches.delete(quoteVault.toBase58());
+    this.sendVaultSubscriptionUpdate();
   }
 
   public async stop(): Promise<void> {
@@ -216,8 +229,39 @@ export class GeyserListener extends EventEmitter {
         this.emit('market', keyedInfo);
       } else if (filterId === 'walletTokenAccounts') {
         this.emit('wallet', keyedInfo);
+      } else if (filterId === 'vaultAccounts') {
+        const mint = this.vaultWatches.get(pubkey);
+        if (mint) {
+          this.emit('vault_update', mint, new PublicKey(pubkey), data);
+        }
       }
     }
+  }
+
+  private sendVaultSubscriptionUpdate(): void {
+    if (!this.stream) return;
+    const accounts = Array.from(this.vaultWatches.keys());
+    const request: SubscribeRequest = {
+      accounts: {
+        vaultAccounts: {
+          account: accounts,
+          owner: [],
+          filters: [],
+          nonemptyTxnSignature: false,
+        },
+      },
+      slots: {},
+      transactions: {},
+      transactionsStatus: {},
+      blocks: {},
+      blocksMeta: {},
+      entry: {},
+      accountsDataSlice: [],
+      commitment: CommitmentLevel.CONFIRMED,
+    };
+    this.stream.write(request, (err: Error | null | undefined) => {
+      if (err) logger.warn({ err }, 'Failed to update vault subscription');
+    });
   }
 
   private async scheduleReconnect(): Promise<void> {
