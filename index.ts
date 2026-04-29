@@ -1,5 +1,5 @@
 import { MarketCache, PoolCache } from './cache';
-import { Listeners, GeyserListener } from './listeners';
+import { Listeners, GeyserListener, VaultUpdate } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { AccountLayout, getAssociatedTokenAddressSync } from '@solana/spl-token';
@@ -265,6 +265,10 @@ const runListener = async () => {
 
   listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
     const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
+
+    // Feed pool state to any active pre-buy observation (no-op if mint not observed)
+    bot.observePoolState(poolState);
+
     const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
     const exists = await poolCache.get(poolState.baseMint.toString());
 
@@ -285,8 +289,8 @@ const runListener = async () => {
   });
 
   if (USE_GEYSER) {
-    listeners.on('vault_update', (mint: string, pubkey: PublicKey, data: Buffer) => {
-      bot.updateVaultBalance(mint, pubkey, data);
+    listeners.on('vault', (update: VaultUpdate) => {
+      bot.updateVaultBalance(update.mint, update.pubkey, update.data, update.writeVersion);
     });
   }
 

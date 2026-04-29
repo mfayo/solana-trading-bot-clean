@@ -71,6 +71,11 @@ interface PreBuyObservation {
   grossQuoteFlow: BN;
   peakQuoteVault: BN | null;
   swapCount: number;
+  // dedup: reject duplicate / out-of-order Yellowstone deliveries
+  lastQuoteWriteVersion: bigint;
+  lastBaseWriteVersion: bigint;
+  // real swap count source: pool state swapBaseInAmount delta
+  baselineSwapBaseIn: BN | null;
 }
 
 interface WatchedPoolState {
@@ -335,7 +340,12 @@ export class Bot {
     }
   }
 
-  public updateVaultBalance(mint: string, pubkey: PublicKey, data: Buffer): void {
+  public updateVaultBalance(
+    mint: string,
+    pubkey: PublicKey,
+    data: Buffer,
+    writeVersion: bigint,
+  ): void {
     let amountBN: BN;
     try {
       const { amount } = AccountLayout.decode(data);
@@ -352,6 +362,12 @@ export class Bot {
       const isBase = pubkey.equals(obs.poolKeys.baseVault);
 
       if (isQuote) {
+        if (writeVersion <= obs.lastQuoteWriteVersion) {
+          logger.trace({ mint, writeVersion: writeVersion.toString() }, 'Skipping stale quote vault update');
+          return;
+        }
+        obs.lastQuoteWriteVersion = writeVersion;
+
         if (obs.baselineQuoteVault === null) {
           obs.baselineQuoteVault = amountBN;
           obs.currentQuoteVault = amountBN;
@@ -360,12 +376,18 @@ export class Bot {
           const delta = amountBN.sub(obs.currentQuoteVault!).abs();
           obs.grossQuoteFlow = obs.grossQuoteFlow.add(delta);
           obs.currentQuoteVault = amountBN;
-          obs.swapCount += 1;
+          // swapCount is now tracked via observePoolState() from swapBaseInAmount
           if (amountBN.gt(obs.peakQuoteVault!)) obs.peakQuoteVault = amountBN;
         }
         return;
       }
       if (isBase) {
+        if (writeVersion <= obs.lastBaseWriteVersion) {
+          logger.trace({ mint, writeVersion: writeVersion.toString() }, 'Skipping stale base vault update');
+          return;
+        }
+        obs.lastBaseWriteVersion = writeVersion;
+
         if (obs.baselineBaseVault === null) obs.baselineBaseVault = amountBN;
         obs.currentBaseVault = amountBN;
         return;
@@ -383,6 +405,26 @@ export class Bot {
     }
   }
 
+  public observePoolState(poolState: LiquidityStateV4): void {
+    const mint = poolState.baseMint.toString();
+    const obs = this.preBuyObservations.get(mint);
+    if (!obs) return;
+
+    const current = poolState.swapBaseInAmount;
+
+    if (obs.baselineSwapBaseIn === null) {
+      obs.baselineSwapBaseIn = current;
+      return;
+    }
+
+    // swapBaseInAmount only increases on actual swap transactions, not LP
+    // adds/removes or fee accruals — each strictly-greater value is one swap.
+    if (current.gt(obs.baselineSwapBaseIn)) {
+      obs.swapCount += 1;
+      obs.baselineSwapBaseIn = current;
+    }
+  }
+
   private startPreBuyObservation(poolKeys: LiquidityPoolKeysV4): void {
     if (!this.geyserListener) return;
     const mint = poolKeys.baseMint.toString();
@@ -395,6 +437,9 @@ export class Bot {
       grossQuoteFlow: new BN(0),
       peakQuoteVault: null,
       swapCount: 0,
+      lastQuoteWriteVersion: BigInt(0),
+      lastBaseWriteVersion: BigInt(0),
+      baselineSwapBaseIn: null,
     });
     this.geyserListener.watchVaults(poolKeys.baseVault, poolKeys.quoteVault, mint);
   }

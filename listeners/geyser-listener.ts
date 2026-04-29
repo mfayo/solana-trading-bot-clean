@@ -20,6 +20,14 @@ interface GeyserConfig {
   cacheNewMarkets: boolean;
 }
 
+export interface VaultUpdate {
+  mint: string;
+  pubkey: PublicKey;
+  data: Buffer;
+  slot: bigint;
+  writeVersion: bigint;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -211,17 +219,31 @@ export class GeyserListener extends EventEmitter {
     if (!update.account) return;
 
     const { filters } = update;
-    const { account } = update.account;
+    const { account, slot } = update.account;
     if (!account?.pubkey || !account.data) return;
 
     const pubkey = bs58.encode(Buffer.from(account.pubkey));
     const data = Buffer.from(account.data);
+
+    // Vault routing is pubkey-based — does not rely on the filters[] label,
+    // which is not guaranteed to be populated on every Yellowstone delivery.
+    const mint = this.vaultWatches.get(pubkey);
+    if (mint) {
+      const vaultUpdate: VaultUpdate = {
+        mint,
+        pubkey: new PublicKey(pubkey),
+        data,
+        slot: BigInt(slot ?? '0'),
+        writeVersion: BigInt(account.writeVersion ?? '0'),
+      };
+      this.emit('vault', vaultUpdate);
+      return; // vault updates are signal-critical; skip the filter loop
+    }
+
     const owner = bs58.encode(Buffer.from(account.owner));
     const lamports = BigInt(account.lamports ?? '0');
-
     const keyedInfo = toKeyedAccountInfo(pubkey, data, owner, lamports);
 
-    // Route to the correct event based on which subscription filter matched
     for (const filterId of filters) {
       if (filterId === 'raydiumPools') {
         this.emit('pool', keyedInfo);
@@ -229,11 +251,6 @@ export class GeyserListener extends EventEmitter {
         this.emit('market', keyedInfo);
       } else if (filterId === 'walletTokenAccounts') {
         this.emit('wallet', keyedInfo);
-      } else if (filterId === 'vaultAccounts') {
-        const mint = this.vaultWatches.get(pubkey);
-        if (mint) {
-          this.emit('vault_update', mint, new PublicKey(pubkey), data);
-        }
       }
     }
   }
