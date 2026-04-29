@@ -59,6 +59,7 @@ export interface BotConfig {
   minFlowRatio: number;
   minSwapCount: number;
   maxDrawdownFromPeakPct: number;
+  paperTrading: boolean;
 }
 
 interface PreBuyObservation {
@@ -518,6 +519,20 @@ export class Bot {
 
     const transaction = new VersionedTransaction(messageV0);
     transaction.sign([wallet, ...innerTransaction.signers]);
+
+    if (this.config.paperTrading) {
+      const estimatedOut = computedAmountOut.amountOut.toFixed();
+      logger.info(
+        {
+          direction,
+          amountIn: amountIn.toFixed(),
+          estimatedOut,
+          mint: (direction === 'buy' ? tokenOut : tokenIn).mint.toString(),
+        },
+        `[PAPER TRADE] Simulated ${direction} — no transaction submitted`,
+      );
+      return { confirmed: true, signature: 'PAPER_TRADE' };
+    }
 
     return this.txExecutor.executeAndConfirm(transaction, wallet, latestBlockhash);
   }

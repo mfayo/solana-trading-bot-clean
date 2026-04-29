@@ -51,6 +51,7 @@ import {
   MIN_FLOW_RATIO,
   MIN_SWAP_COUNT,
   MAX_DRAWDOWN_FROM_PEAK_PCT,
+  PAPER_TRADING,
 } from './helpers';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -93,6 +94,9 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Wallet: ${wallet.publicKey.toString()}`);
 
   logger.info('- Bot -');
+  if (botConfig.paperTrading) {
+    logger.info('⚠️  PAPER TRADING MODE — no real transactions will be submitted');
+  }
 
   logger.info(
     `Using ${TRANSACTION_EXECUTOR} executer: ${bot.isWarp || bot.isJito || (TRANSACTION_EXECUTOR === 'default' ? true : false)}`,
@@ -208,6 +212,7 @@ const runListener = async () => {
     minFlowRatio: MIN_FLOW_RATIO,
     minSwapCount: MIN_SWAP_COUNT,
     maxDrawdownFromPeakPct: MAX_DRAWDOWN_FROM_PEAK_PCT,
+    paperTrading: PAPER_TRADING,
   };
 
   const bot = new Bot(connection, marketCache, poolCache, txExecutor, botConfig);

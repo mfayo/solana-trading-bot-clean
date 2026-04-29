@@ -78,6 +78,9 @@ export const MAX_POOL_SIZE = retrieveEnvVariable('MAX_POOL_SIZE', logger);
 export const USE_SNIPE_LIST = retrieveEnvVariable('USE_SNIPE_LIST', logger) === 'true';
 export const SNIPE_LIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('SNIPE_LIST_REFRESH_INTERVAL', logger));
 
+// Paper trading — no real transactions are submitted
+export const PAPER_TRADING = process.env['PAPER_TRADING'] === 'true';
+
 // Pre-buy observation / delta filters
 export const MIN_BUY_PRESSURE_PCT = Number(retrieveEnvVariable('MIN_BUY_PRESSURE_PCT', logger));
 export const MIN_FLOW_RATIO = Number(retrieveEnvVariable('MIN_FLOW_RATIO', logger));
