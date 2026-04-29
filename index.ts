@@ -278,6 +278,19 @@ const runListener = async () => {
     }
   });
 
+  listeners.on('pumpswap_pool', (updatedAccountInfo: KeyedAccountInfo) => {
+    // Observability only — no buy/sell logic for PumpSwap yet.
+    // PumpSwap pool layout differs from Raydium and requires separate decoding,
+    // swap instruction builders, and pool keys. Tracking flow rate here.
+    logger.debug(
+      {
+        account: updatedAccountInfo.accountId.toString(),
+        dataSize: updatedAccountInfo.accountInfo.data.length,
+      },
+      'PumpSwap pool update received',
+    );
+  });
+
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
     const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo.data);
 

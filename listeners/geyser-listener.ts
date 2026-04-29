@@ -64,6 +64,8 @@ function memcmpBytes(layout: { offsetOf(field: string): number }, field: string,
 
 const RECONNECT_DELAY_MS = 2_000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+const PUMPSWAP_PROGRAM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
+const PUMPSWAP_POOL_SIZE = 244;
 
 export class GeyserListener extends EventEmitter {
   private client: Client;
@@ -176,6 +178,16 @@ export class GeyserListener extends EventEmitter {
       nonemptyTxnSignature: false,
     };
 
+    // ── PumpSwap pool updates ──────────────────────────────────────────────
+    request.accounts['pumpswapPools'] = {
+      account: [],
+      owner: [PUMPSWAP_PROGRAM_ID],
+      filters: [
+        { datasize: PUMPSWAP_POOL_SIZE.toString() },
+      ],
+      nonemptyTxnSignature: false,
+    };
+
     // ── OpenBook market updates (optional) ─────────────────────────────────
     if (cacheNewMarkets) {
       request.accounts['openBookMarkets'] = {
@@ -251,6 +263,8 @@ export class GeyserListener extends EventEmitter {
         this.emit('market', keyedInfo);
       } else if (filterId === 'walletTokenAccounts') {
         this.emit('wallet', keyedInfo);
+      } else if (filterId === 'pumpswapPools') {
+        this.emit('pumpswap_pool', keyedInfo);
       }
     }
   }
