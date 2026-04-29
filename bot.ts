@@ -74,8 +74,9 @@ interface PreBuyObservation {
   // dedup: reject duplicate / out-of-order Yellowstone deliveries
   lastQuoteWriteVersion: bigint;
   lastBaseWriteVersion: bigint;
-  // real swap count source: pool state swapBaseInAmount delta
-  baselineSwapBaseIn: BN | null;
+  // real swap count: tracks both swap directions from pool state
+  baselineSwapBaseIn: BN | null;  // increases on sells (base → quote)
+  baselineSwapQuoteIn: BN | null; // increases on buys  (quote → base)
 }
 
 interface WatchedPoolState {
@@ -410,18 +411,25 @@ export class Bot {
     const obs = this.preBuyObservations.get(mint);
     if (!obs) return;
 
-    const current = poolState.swapBaseInAmount;
+    const curBaseIn = poolState.swapBaseInAmount;
+    const curQuoteIn = poolState.swapQuoteInAmount;
 
-    if (obs.baselineSwapBaseIn === null) {
-      obs.baselineSwapBaseIn = current;
+    // First update — capture baseline for both directions
+    if (obs.baselineSwapBaseIn === null || obs.baselineSwapQuoteIn === null) {
+      obs.baselineSwapBaseIn = curBaseIn;
+      obs.baselineSwapQuoteIn = curQuoteIn;
       return;
     }
 
-    // swapBaseInAmount only increases on actual swap transactions, not LP
-    // adds/removes or fee accruals — each strictly-greater value is one swap.
-    if (current.gt(obs.baselineSwapBaseIn)) {
+    // A swap happened if either direction's cumulative amount strictly increased.
+    // swapBaseInAmount  → sell swap (user sends base, receives quote)
+    // swapQuoteInAmount → buy  swap (user sends quote, receives base)
+    // Both are updated by real swap txs only; LP events touch neither.
+    const swapped = curBaseIn.gt(obs.baselineSwapBaseIn) || curQuoteIn.gt(obs.baselineSwapQuoteIn);
+    if (swapped) {
       obs.swapCount += 1;
-      obs.baselineSwapBaseIn = current;
+      obs.baselineSwapBaseIn = curBaseIn;
+      obs.baselineSwapQuoteIn = curQuoteIn;
     }
   }
 
@@ -440,6 +448,7 @@ export class Bot {
       lastQuoteWriteVersion: BigInt(0),
       lastBaseWriteVersion: BigInt(0),
       baselineSwapBaseIn: null,
+      baselineSwapQuoteIn: null,
     });
     this.geyserListener.watchVaults(poolKeys.baseVault, poolKeys.quoteVault, mint);
   }
