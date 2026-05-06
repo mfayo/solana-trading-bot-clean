@@ -10,6 +10,7 @@ import Client, {
 } from '@triton-one/yellowstone-grpc';
 import { logger } from '../helpers/logger';
 import { ClientDuplexStream } from '@grpc/grpc-js';
+import { PUMP_TOKEN_PROGRAM_ID, PUMPSWAP_AMM_PROGRAM_ID } from '../helpers/constants';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -124,6 +125,8 @@ export class GeyserListener extends EventEmitter {
     const { quoteToken, walletPublicKey, autoSell, cacheNewMarkets } = config;
     const quoteMintB58 = quoteToken.mint.toBase58();
     const openBookProgramB58 = MAINNET_PROGRAM_ID.OPENBOOK_MARKET.toBase58();
+    const pumpProgramId = PUMP_TOKEN_PROGRAM_ID;
+    const pumpswapProgramId = PUMPSWAP_AMM_PROGRAM_ID;
 
     const request: SubscribeRequest = {
       accounts: {},
@@ -151,6 +154,33 @@ export class GeyserListener extends EventEmitter {
             bytes: Buffer.from([6, 0, 0, 0, 0, 0, 0, 0]),
           },
         },
+      ],
+      nonemptyTxnSignature: false,
+    };
+
+    // ── PumpSwap AMM pools (graduated tokens) ───────────────────────────────
+    request.accounts['pumpswapPools'] = {
+      account: [],
+      owner: [pumpswapProgramId],
+      filters: [
+        // Filter for pools with quote mint (SOL)
+        {
+          memcmp: {
+            offset: '32',
+            bytes: bs58.decode(quoteMintB58),
+          },
+        },
+      ],
+      nonemptyTxnSignature: false,
+    };
+
+    // ── Pump.fun Bonding Curves (new tokens) ───────────────────────────────
+    request.accounts['bondingCurves'] = {
+      account: [],
+      owner: [pumpProgramId],
+      filters: [
+        // Bonding curve account data size (new format)
+        { datasize: '151' },
       ],
       nonemptyTxnSignature: false,
     };
@@ -212,6 +242,10 @@ export class GeyserListener extends EventEmitter {
     for (const filterId of filters) {
       if (filterId === 'raydiumPools') {
         this.emit('pool', keyedInfo);
+      } else if (filterId === 'pumpswapPools') {
+        this.emit('pumpswapPool', keyedInfo);
+      } else if (filterId === 'bondingCurves') {
+        this.emit('bondingCurve', keyedInfo);
       } else if (filterId === 'openBookMarkets') {
         this.emit('market', keyedInfo);
       } else if (filterId === 'walletTokenAccounts') {

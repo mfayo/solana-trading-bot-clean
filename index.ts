@@ -1,6 +1,6 @@
 import { MarketCache, PoolCache } from './cache';
 import { Listeners, GeyserListener } from './listeners';
-import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
+import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { AccountLayout, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
@@ -47,6 +47,7 @@ import {
   CONSECUTIVE_FILTER_MATCHES,
   USE_GEYSER,
   GEYSER_ENDPOINT,
+  DEX_MODE,
 } from './helpers';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -104,6 +105,7 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Pre load existing markets: ${PRE_LOAD_EXISTING_MARKETS}`);
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
+  logger.info(`DEX mode: ${DEX_MODE}`);
 
   logger.info('- Buy -');
   logger.info(`Buy amount: ${botConfig.quoteAmount.toFixed()} ${botConfig.quoteToken.name}`);
@@ -256,6 +258,63 @@ const runListener = async () => {
     if (!exists && poolOpenTime > runTimestamp) {
       poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
       await bot.buy(updatedAccountInfo.accountId, poolState);
+    }
+  });
+
+  // ── PumpSwap Event Handlers ────────────────────────────────────────────────────
+  // Handle PumpSwap AMM pools (graduated tokens)
+  listeners.on('pumpswapPool', async (updatedAccountInfo: KeyedAccountInfo) => {
+    if (DEX_MODE !== 'raydium' && DEX_MODE !== 'all') {
+      return; // Skip if not configured for PumpSwap
+    }
+    
+    const poolData = updatedAccountInfo.accountInfo.data;
+    if (poolData.length < 32) return;
+    
+    // Extract base mint from pool data (typically at offset 0)
+    const baseMint = new PublicKey(poolData.slice(0, 32));
+    const exists = await poolCache.getPumpSwapPool(baseMint.toString());
+
+    if (!exists) {
+      poolCache.savePumpSwapPool({
+        id: updatedAccountInfo.accountId.toString(),
+        baseMint: baseMint.toString(),
+        baseDecimals: 6, // Would need to fetch from token
+        quoteDecimals: 9,
+        poolAddress: updatedAccountInfo.accountId.toString(),
+        type: 'pumpswapAMM',
+        timestamp: Math.floor(Date.now() / 1000),
+      });
+      logger.info({ mint: baseMint.toString() }, 'Detected PumpSwap AMM pool');
+      // Would call bot.buy() here with appropriate poolKeys
+    }
+  });
+
+  // Handle Pump.fun Bonding Curves (new tokens)
+  listeners.on('bondingCurve', async (updatedAccountInfo: KeyedAccountInfo) => {
+    if (DEX_MODE !== 'raydium' && DEX_MODE !== 'all' && DEX_MODE !== 'pump') {
+      return;
+    }
+    
+    const curveData = updatedAccountInfo.accountInfo.data;
+    // Bonding curve data contains mint at offset (typically 32)
+    if (curveData.length < 64) return;
+    
+    const mint = new PublicKey(curveData.slice(32, 64));
+    const exists = await poolCache.getPumpSwapPool(mint.toString());
+
+    if (!exists) {
+      poolCache.savePumpSwapPool({
+        id: updatedAccountInfo.accountId.toString(),
+        baseMint: mint.toString(),
+        baseDecimals: 6,
+        quoteDecimals: 9,
+        poolAddress: updatedAccountInfo.accountId.toString(),
+        type: 'bondingCurve',
+        timestamp: Math.floor(Date.now() / 1000),
+      });
+      logger.info({ mint: mint.toString() }, 'Detected Pump.fun bonding curve');
+      // Would call bot.buy() here for bonding curve trading
     }
   });
 
