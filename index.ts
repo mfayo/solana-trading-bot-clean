@@ -48,6 +48,11 @@ import {
   USE_GEYSER,
   GEYSER_ENDPOINT,
   DEX_MODE,
+  USE_TRAILING_STOP,
+  TRAILING_STOP_DISTANCE,
+  TRAILING_STOP_ACTIVATION,
+  PUMP_BUY_SLIPPAGE,
+  PUMP_SELL_SLIPPAGE,
 } from './helpers';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -106,6 +111,7 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`DEX mode: ${DEX_MODE}`);
+  logger.info(`Pump slippage: buy ${PUMP_BUY_SLIPPAGE}%, sell ${PUMP_SELL_SLIPPAGE}%`);
 
   logger.info('- Buy -');
   logger.info(`Buy amount: ${botConfig.quoteAmount.toFixed()} ${botConfig.quoteToken.name}`);
@@ -123,6 +129,7 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Price check duration: ${botConfig.priceCheckDuration} ms`);
   logger.info(`Take profit: ${botConfig.takeProfit}%`);
   logger.info(`Stop loss: ${botConfig.stopLoss}%`);
+  logger.info(`Trailing stop: ${USE_TRAILING_STOP} (distance: ${TRAILING_STOP_DISTANCE}%, activation: ${TRAILING_STOP_ACTIVATION}%)`);
 
   logger.info('- Snipe list -');
   logger.info(`Snipe list: ${botConfig.useSnipeList}`);

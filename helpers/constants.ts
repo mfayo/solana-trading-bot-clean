@@ -64,6 +64,20 @@ export const PRICE_CHECK_INTERVAL = Number(retrieveEnvVariable('PRICE_CHECK_INTE
 export const PRICE_CHECK_DURATION = Number(retrieveEnvVariable('PRICE_CHECK_DURATION', logger));
 export const SELL_SLIPPAGE = Number(retrieveEnvVariable('SELL_SLIPPAGE', logger));
 
+// ── Trailing Stop Loss ───────────────────────────────────────────────────────────────
+// Trailing stop loss: stops at profit peak minus distance (moves up with price)
+export const USE_TRAILING_STOP = process.env['USE_TRAILING_STOP'] === 'true';
+export const TRAILING_STOP_DISTANCE = Number(process.env['TRAILING_STOP_DISTANCE'] ?? 0); // % distance from peak (e.g., 5 = 5% below peak)
+export const TRAILING_STOP_ACTIVATION = Number(process.env['TRAILING_STOP_ACTIVATION'] ?? 0); // % profit to activate trailing (e.g., 10 = activate after 10% profit)
+
+// ── PumpSwap / PumpFun Configuration ────────────────────────────────────────────────
+export const DEX_MODE = process.env['DEX'] ?? 'raydium'; // raydium, pumpswap, pump, all
+export const PUMP_BUY_SLIPPAGE = Number(process.env['PUMP_BUY_SLIPPAGE'] ?? 1); // Slippage for pump.fun buys (default 1%)
+export const PUMP_SELL_SLIPPAGE = Number(process.env['PUMP_SELL_SLIPPAGE'] ?? 1); // Slippage for pump.fun sells (default 1%)
+
+export const PUMP_TOKEN_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'; // Bonding curve (pump.fun)
+export const PUMPSWAP_AMM_PROGRAM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'; // PumpSwap AMM
+
 // Filters
 export const FILTER_CHECK_INTERVAL = Number(retrieveEnvVariable('FILTER_CHECK_INTERVAL', logger));
 export const FILTER_CHECK_DURATION = Number(retrieveEnvVariable('FILTER_CHECK_DURATION', logger));
@@ -77,10 +91,3 @@ export const MIN_POOL_SIZE = retrieveEnvVariable('MIN_POOL_SIZE', logger);
 export const MAX_POOL_SIZE = retrieveEnvVariable('MAX_POOL_SIZE', logger);
 export const USE_SNIPE_LIST = retrieveEnvVariable('USE_SNIPE_LIST', logger) === 'true';
 export const SNIPE_LIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('SNIPE_LIST_REFRESH_INTERVAL', logger));
-
-// ── DEX Configuration ───────────────────────────────────────────────────────────────
-export const DEX_MODE = process.env['DEX'] ?? 'raydium'; // raydium, pumpswap, pump, all
-
-// PumpSwap Program IDs
-export const PUMP_TOKEN_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'; // Bonding curve (pump.fun)
-export const PUMPSWAP_AMM_PROGRAM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'; // PumpSwap AMM
